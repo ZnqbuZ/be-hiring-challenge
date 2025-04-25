@@ -1,6 +1,6 @@
 services:
   dataset-app: &server
-    build: ../../be-hiring-challenge.bak/server
+    build: .
     restart: always
     ports:
       - "8000:8000"
