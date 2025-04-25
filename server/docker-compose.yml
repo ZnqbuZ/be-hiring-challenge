@@ -1,0 +1,20 @@
+services:
+  dataset-app: &server
+    build: ../../be-hiring-challenge.bak/server
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - UVICORN_HOST=0.0.0.0
+      - UVICORN_PORT=8000
+      - API_ROOT=/
+      - WORKER=dataset-worker
+      - FILE_STORE=/var/lib/dataset-app
+    volumes:
+      - /opt/app:/var/lib/dataset-app
+  dataset-worker:
+    <<: *server
+    ports: []
+    command:
+      - /app/.venv/bin/uvicorn
+      - main:worker
