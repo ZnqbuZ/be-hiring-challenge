@@ -3,9 +3,12 @@ from collections import UserDict
 from contextlib import contextmanager
 from enum import Enum
 from io import IOBase
-from typing import Optional, Generator, IO, List
+from typing import Optional, Generator, IO, List, cast
 
 import pandas as pd
+
+from config import logger
+
 
 class Dataset:
     """
@@ -52,6 +55,13 @@ class Dataset:
         :return: The metadata of the dataset
         """
 
+        if self._metadata is None:
+            try:
+                with self.s_open(DatasetStream.METADATA, "r") as f:
+                    self.import_metadata(json.load(f))
+            except FileNotFoundError:
+                raise ValueError("No metadata available")
+
         return self._metadata
 
     @property
@@ -80,7 +90,21 @@ class Dataset:
         :return: The dataset as a pandas dataframe
         """
 
+        if self._data is None:
+            self.load()
+
         return self._data
+
+    @data.setter
+    def data(self, value: pd.DataFrame) -> None:
+        """
+        Set the dataset and sync it with the file store so that all dependent properties are updated.
+        :param value:
+        :return: None
+        """
+
+        self._data = value
+        self.sync([DatasetStream.DATA])
 
     @property
     def size(self) -> int:
@@ -109,6 +133,63 @@ class Dataset:
                  id: Optional[str | uuid.UUID] = None) -> None:
 
         self._data = self._metadata = None
+
+        # If id is not None, then the dataset will be loaded from the file store later.
+        # All other parameters are ignored.
+        if id is not None:
+            self._id = uuid.UUID(id)
+            return
+
+        if data is None:
+            raise ValueError("data is required")
+
+        # Create a new dataset with given data
+        self._id = uuid.uuid4()
+
+        self.import_metadata({
+            "id": str(self.id),
+            "name": name if name is not None else "Unnamed",
+        })
+
+        self.import_data(data, mode)
+
+    def import_data(self, data: pd.DataFrame | IOBase, mode: str = "pandas") -> None:
+        """
+        Import data.
+        :param data: The data to import
+        :param mode: The mode of the data, can be pandas or csv (default: "pandas")
+        :return: None
+        """
+
+        if isinstance(data, IOBase):
+            data = cast(IO[bytes], data)
+            if mode == "csv":
+                self.data = pd.read_csv(data)
+            else:
+                raise ValueError(f"Invalid mode: {mode} for string data")
+        elif isinstance(data, pd.DataFrame):
+            if mode != "pandas":
+                logger.warning(f"Invalid mode: {mode} for dataframe data")
+            self.data = data
+
+    def import_metadata(self, metadata: dict) -> None:
+        """
+        Import metadata.
+        :param metadata: The metadata to import
+        :return: None
+        """
+
+        if not isinstance(metadata, dict):
+            raise ValueError("metadata must be a dictionary")
+
+        self._metadata = UserDict()
+        self._metadata.__setitem__ = lambda k, v: (
+            UserDict.__setitem__(self._metadata, k, v),
+            self.sync([DatasetStream.METADATA]),
+        )[0]
+
+        self._metadata.data = metadata
+        self.sync([DatasetStream.METADATA])
 
     def sync(self, target: List["DatasetStream"] = ()) -> None:
         """
