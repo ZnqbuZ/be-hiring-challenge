@@ -15,7 +15,7 @@ class Config:
 
 LOGGING_CONFIG = {
     "version": 1,
-    "disable_existing_loggers": False,  # 保留已有的日志器
+    "disable_existing_loggers": False,
     "formatters": {
         "default": {
             "()" : "colorlog.ColoredFormatter",

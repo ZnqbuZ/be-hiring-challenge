@@ -8,10 +8,9 @@ services:
       - UVICORN_HOST=0.0.0.0
       - UVICORN_PORT=8000
       - API_ROOT=/
-      - WORKER=dataset-worker
-      - FILE_STORE=/var/lib/dataset-app
+      - WORKER_ENDPOINT=http://dataset-worker:8000
     volumes:
-      - /opt/app:/var/lib/dataset-app
+      - /opt/app:/var/lib/app
   dataset-worker:
     <<: *server
     ports: []
