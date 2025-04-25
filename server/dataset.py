@@ -1,4 +1,5 @@
 import json
+import logging
 import uuid
 from collections import UserDict
 from contextlib import contextmanager
@@ -8,6 +9,7 @@ from typing import Optional, Generator, IO, List, cast, Iterator
 
 import pandas as pd
 
+import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 
@@ -39,6 +41,9 @@ class Dataset:
         """
 
         path = Config.FILE_STORE / str(self.id) / stream.value
+
+        logger.debug(f"Opening {path} in {mode} mode")
+
         f = open(path, mode)
         try:
             yield f
@@ -76,11 +81,7 @@ class Dataset:
         """
 
         if self._metadata is None:
-            try:
-                with self.s_open(DatasetStream.METADATA, "r") as f:
-                    self.import_metadata(json.load(f))
-            except FileNotFoundError:
-                raise ValueError("No metadata available")
+            self.load([DatasetStream.METADATA])
 
         return self._metadata
 
@@ -111,7 +112,8 @@ class Dataset:
         """
 
         if self._data is None:
-            self.load()
+            logging.debug("Loading dataset from stream")
+            self.load([DatasetStream.DATA])
         return self._data
 
     @data.setter
@@ -157,6 +159,7 @@ class Dataset:
         # All other parameters are ignored.
         if id is not None:
             self._id = uuid.UUID(id)
+            logging.debug("Empty dataset object created with ref id: %s.", self.id)
             return
 
         if data is None:
@@ -172,6 +175,12 @@ class Dataset:
 
         self.import_data(data, mode)
 
+        logging.debug("Dataset object created with given data. Id: %s.", self.id)
+
+        self.sync()
+
+        logging.debug("Synced with file store.", self.id)
+
     def import_data(self, data: pd.DataFrame | IOBase, mode: str = "pandas") -> None:
         """
         Import data.
@@ -183,13 +192,13 @@ class Dataset:
         if isinstance(data, IOBase):
             data = cast(IO[bytes], data)
             if mode == "csv":
-                self.data = pd.read_csv(data)
+                self._data = pd.read_csv(data)
             else:
                 raise ValueError(f"Invalid mode: {mode} for string data")
         elif isinstance(data, pd.DataFrame):
             if mode != "pandas":
                 logger.warning(f"Invalid mode: {mode} for dataframe data")
-            self.data = data
+            self._data = data
 
     def import_metadata(self, metadata: dict) -> None:
         """
@@ -208,7 +217,6 @@ class Dataset:
         )[0]
 
         self._metadata.data = metadata
-        self.sync([DatasetStream.METADATA])
 
     def sync(self, target: List["DatasetStream"] = ()) -> None:
         """
@@ -231,9 +239,12 @@ class Dataset:
         if len(target) == 0:
             target = list(DatasetStream)
 
+        logging.debug(f"Saving dataset {self.id}, target(s): {target}")
+
         # Create the directory if it does not exist
         path = Config.FILE_STORE / str(self.id)
         if not path.exists():
+            logging.debug(f"Creating directory {path}")
             path.mkdir(parents=True, exist_ok=True)
 
         for item in target:
@@ -246,6 +257,7 @@ class Dataset:
                         self.data.to_excel(fb, engine="openpyxl", index=False)
                     case DatasetStream.PLOT:
                         with PdfPages(fb) as pdf:
+                            matplotlib.use("Agg")
                             for column in self.data.select_dtypes(include=["number"]).columns:
                                 fig, ax = plt.subplots()
                                 self.data[column].hist(ax=ax)
@@ -264,15 +276,17 @@ class Dataset:
         if len(target) == 0:
             target = list(DatasetStream)
 
+        logging.debug(f"Loading dataset {self.id}, target(s): {target}")
+
         for item in target:
             if item == DatasetStream.DATA:
                 with self.s_open(item, "rb") as f:
                     fb = cast(IO[bytes], f)
-                    self._data = pd.read_parquet(fb, engine="pyarrow")
+                    self.import_data(pd.read_parquet(fb, engine="pyarrow"))
 
             if item == DatasetStream.METADATA:
                 with self.s_open(item, "r") as f:
-                    self._metadata.data = json.load(f)
+                    self.import_metadata(json.load(f))
 
 
 DatasetStream = Dataset.Stream
