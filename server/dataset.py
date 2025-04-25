@@ -1,13 +1,17 @@
+import json
 import uuid
 from collections import UserDict
 from contextlib import contextmanager
 from enum import Enum
 from io import IOBase
-from typing import Optional, Generator, IO, List, cast
+from typing import Optional, Generator, IO, List, cast, Iterator
 
 import pandas as pd
 
-from config import logger
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_pdf import PdfPages
+
+from config import Config, logger
 
 
 class Dataset:
@@ -33,6 +37,13 @@ class Dataset:
         :param mode: The mode to open the file in
         :return: The file object
         """
+
+        path = Config.FILE_STORE / str(self.id) / stream.value
+        f = open(path, mode)
+        try:
+            yield f
+        finally:
+            f.close()
 
     _id: uuid.UUID
 
@@ -92,7 +103,6 @@ class Dataset:
 
         if self._data is None:
             self.load()
-
         return self._data
 
     @data.setter
@@ -205,11 +215,55 @@ class Dataset:
         :return: None
         """
 
+        if DatasetStream.DATA in target:
+            target.append(DatasetStream.EXCEL)
+            target.append(DatasetStream.PLOT)
+
+        if len(target) == 0:
+            target = list(DatasetStream)
+
+        # Create the directory if it does not exist
+        path = Config.FILE_STORE / str(self.id)
+        if not path.exists():
+            path.mkdir(parents=True, exist_ok=True)
+
+        for item in target:
+            with self.s_open(item, "wb+") as f:
+                fb = cast(IO[bytes], f)
+                match item:
+                    case DatasetStream.DATA:
+                        self.data.to_parquet(fb, engine="pyarrow", index=False)
+                    case DatasetStream.EXCEL:
+                        self.data.to_excel(fb, engine="openpyxl", index=False)
+                    case DatasetStream.PLOT:
+                        with PdfPages(fb) as pdf:
+                            for column in self.data.select_dtypes(include=["number"]).columns:
+                                fig, ax = plt.subplots()
+                                self.data[column].hist(ax=ax)
+                                ax.set_title(column)
+                                pdf.savefig(fig)
+                                plt.close(fig)
+                    case DatasetStream.METADATA:
+                        fb.write(json.dumps(dict(self._metadata), indent=4).encode("utf-8"))
+
     def load(self, target: List["DatasetStream"] = ()) -> None:
         """
         Load the dataset from the file store.
         :return: None
         """
+
+        if len(target) == 0:
+            target = list(DatasetStream)
+
+        for item in target:
+            if item == DatasetStream.DATA:
+                with self.s_open(item, "rb") as f:
+                    fb = cast(IO[bytes], f)
+                    self._data = pd.read_parquet(fb, engine="pyarrow")
+
+            if item == DatasetStream.METADATA:
+                with self.s_open(item, "r") as f:
+                    self._metadata.data = json.load(f)
 
 
 DatasetStream = Dataset.Stream
