@@ -45,6 +45,15 @@ class Dataset:
         finally:
             f.close()
 
+    def s_iter(self, stream: Stream) -> Iterator[bytes]:
+        """
+        Iterate over the file.
+        :return: The file object
+        """
+
+        with self.s_open(stream, "rb") as f:
+            yield from f
+
     _id: uuid.UUID
 
     _data: Optional[pd.DataFrame]
